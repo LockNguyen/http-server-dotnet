@@ -108,14 +108,6 @@ public static class MyTcpServer
             {
                 statusCode = HttpStatusCode.Ok;
             }
-            else if (request.Path.StartsWith(@"/echo/"))
-            {
-                statusCode = HttpStatusCode.Ok;
-
-                string requestArgument = request.Path.Substring(6);
-                Console.WriteLine(requestArgument);
-                responseBody = System.Text.Encoding.UTF8.GetBytes(requestArgument);
-            }
             else if (request.Path == @"/get-sum/") 
             {
                 statusCode = HttpStatusCode.Ok;
@@ -126,16 +118,24 @@ public static class MyTcpServer
                 string requestArgument = sum.ToString();
                 responseBody = System.Text.Encoding.UTF8.GetBytes(requestArgument);
             }
+            else if (request.Path.StartsWith(@"/echo/"))
+            {
+                statusCode = HttpStatusCode.Ok;
+
+                string requestArgument = request.Path.Substring(6);
+                Console.WriteLine(requestArgument);
+                responseBody = System.Text.Encoding.UTF8.GetBytes(requestArgument);
+            }
             else if (request.Path.StartsWith(@"/site/"))
             {
                 // Serve requested HTML file
                 string requestSiteName = request.Path.Substring(6);
-                if (File.Exists(@$"./{requestSiteName}.html"))
+                if (Directory.Exists(@$"./wwwroot/{requestSiteName}"))
                 {
                     statusCode = HttpStatusCode.Ok;
 
                     Console.WriteLine($"Host: {request.Host}");
-                    string requestArgument = File.ReadAllText(@$"./{requestSiteName}.html");
+                    string requestArgument = File.ReadAllText(@$"./wwwroot/{requestSiteName}/{requestSiteName}.html");
                     responseBody = System.Text.Encoding.UTF8.GetBytes(requestArgument);
                 }
                 else
