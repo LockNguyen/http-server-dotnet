@@ -1,0 +1,12 @@
+bin/
+obj/
+*.user
+*.suo
+*.log
+*.tmp
+*.pdb
+*.cache
+*.vs/
+*.DS_Store
+*.idea/
+*.vscode/
