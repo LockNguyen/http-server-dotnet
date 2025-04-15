@@ -4,7 +4,15 @@ using System.Text;
 
 public static class HttpStatusCode {
   public const string Ok = "200 OK";
+  public const string BadRequest = "400 Bad Request";
+  public const string Unauthorized = "401 Unauthorized";
+  public const string Forbidden = "403 Forbidden";
   public const string NotFound = "404 Not Found";
+  public const string InternalServerError = "500 Internal Server Error";
+  public const string NotImplemented = "501 Not Implemented";
+  public const string BadGateway = "502 Bad Gateway";
+  public const string ServiceUnavailable = "503 Service Unavailable";
+  public const string GatewayTimeout = "504 Gateway Timeout";
 }
 
 public static class MyTcpServer
@@ -15,7 +23,7 @@ public static class MyTcpServer
     private static void Main(string[] args) {
 
         // Create the TCP Server
-        TcpListener server = new TcpListener(IPAddress.Parse("10.104.60.62"), 4321);
+        TcpListener server = new TcpListener(IPAddress.Any, 4321);
 
         // Start the TCP Server
         server.Start();
@@ -94,8 +102,9 @@ public static class MyTcpServer
 
     private static byte[] ProcessRequest(HttpRequest request) {
 
-        string statusCode = HttpStatusCode.NotFound;
-        byte[] responseBody = null;
+        string statusCode = HttpStatusCode.InternalServerError;
+        byte[]? responseBody = null;
+        string contentType = "plain/text";
 
         // Old: Generate simple response message
         // responseBody = path == "/" ? "HTTP/1.1 200 OK\r\n"
@@ -123,20 +132,51 @@ public static class MyTcpServer
                 statusCode = HttpStatusCode.Ok;
 
                 string requestArgument = request.Path.Substring(6);
-                Console.WriteLine(requestArgument);
                 responseBody = System.Text.Encoding.UTF8.GetBytes(requestArgument);
             }
             else if (request.Path.StartsWith(@"/site/"))
             {
-                // Serve requested HTML file
-                string requestSiteName = request.Path.Substring(6);
-                if (Directory.Exists(@$"./wwwroot/{requestSiteName}"))
-                {
-                    statusCode = HttpStatusCode.Ok;
+                string[] requestArgument = request.Path.Substring(6).Split('/');
+                string? requestDomain;
+                string? requestAsset;
+                string? requestFilePath = null;
+                Console.WriteLine($"Requesting site: {request.Path}");
 
+                if (requestArgument.Length == 1)
+                {
+                    requestDomain = requestArgument[0];
+                    requestAsset = "index.html";
+                    requestFilePath = @$"./wwwroot/{requestDomain}/{requestAsset}";
+                }
+                else if (requestArgument.Length == 2)
+                {
+                    requestDomain = requestArgument[0];
+                    requestAsset = requestArgument[1];
+                    requestFilePath = @$"./wwwroot/{requestDomain}/{requestAsset}";
+                }
+
+                // Check if the requested site exists in the wwwroot directory
+                if (requestFilePath != null && File.Exists(requestFilePath))
+                {
+                    // Serve requested HTML file
+                    statusCode = HttpStatusCode.Ok;
                     Console.WriteLine($"Host: {request.Host}");
-                    string requestArgument = File.ReadAllText(@$"./wwwroot/{requestSiteName}/{requestSiteName}.html");
-                    responseBody = System.Text.Encoding.UTF8.GetBytes(requestArgument);
+                    Console.WriteLine($"Requesting file: {requestFilePath}");
+
+                    string fileToServe = File.ReadAllText(requestFilePath);
+                    responseBody = System.Text.Encoding.UTF8.GetBytes(fileToServe);
+
+                    // Set content type based on file extension.
+                    string ext = Path.GetExtension(requestFilePath).ToLower();
+                    if (ext == ".css")
+                    {
+                        contentType = "text/css";
+                    }
+                    else if (ext == ".html")
+                    {
+                        contentType = "text/html";
+                    }
+
                 }
                 else
                 {
@@ -145,18 +185,19 @@ public static class MyTcpServer
             }
             else
             {
-                statusCode = HttpStatusCode.NotFound;
+                statusCode = HttpStatusCode.BadRequest;
             }
         }
         else
         {
-            statusCode = HttpStatusCode.NotFound;
+            statusCode = HttpStatusCode.Forbidden;
         }
 
-        return WriteResponse(statusCode, responseBody);
+        return WriteResponse(statusCode, responseBody, contentType);
     }
 
-    private static byte[] WriteResponse(string statusCode, byte[] body) {
+    private static byte[] WriteResponse(string statusCode, byte[]? body, string contentType) {
+        // Create a message array to hold the response header and body
         List<byte> message = new List<byte>();
         StringBuilder responseHeader = new StringBuilder();
 
@@ -166,7 +207,7 @@ public static class MyTcpServer
 
         // Add the Headers to the responseHeader array
         if (body != null) {
-            responseHeader.Append("Content-Type: text/html");
+            responseHeader.Append($"Content-Type: {contentType}");
             responseHeader.Append(NEW_LINE);
             responseHeader.Append($"Content-Length: {body.Length}");
             responseHeader.Append(NEW_LINE);
