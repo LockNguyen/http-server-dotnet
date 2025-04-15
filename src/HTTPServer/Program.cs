@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
+using System.Text.RegularExpressions;
 
 public static class HttpStatusCode {
   public const string Ok = "200 OK";
@@ -17,8 +18,9 @@ public static class HttpStatusCode {
 
 public static class MyTcpServer
 {
-    record HttpRequest(string Method, string Path, string Version, string Host, string TwoNumbers);
+    record HttpRequest(string Method, string Path, string Version, Dictionary<string, string> Headers, string? body);
     const string NEW_LINE = "\r\n";
+    const string DOUBLE_NEW_LINE = "\r\n\r\n";
 
     private static void Main(string[] args) {
 
@@ -66,7 +68,7 @@ public static class MyTcpServer
     private static HttpRequest ReadRequest(Stream stream) {
 
         // Create a requestBuffer (byte array)
-        byte[] requestBuffer = new byte[1024];                                  
+        byte[] requestBuffer = new byte[8192];                                  
 
         // Old: Extract the request from the Socket Connection
         // int numBytes = socket.Receive(requestBuffer, SocketFlags.None);      // Store the incoming message in the requestBuffer
@@ -74,31 +76,37 @@ public static class MyTcpServer
         // New: Extract the request from the TcpClient Connection
         int numBytes = stream.Read(requestBuffer);                              // Store the incoming message in the requestBuffer
 
-        // Convert the requestBuffer to a string
-        string[] requestLines = System.Text.Encoding.UTF8.GetString(requestBuffer, 0, numBytes).Split(NEW_LINE);
+        // Convert the requestBuffer (byte[]) to a string
+        string requestRaw = System.Text.Encoding.UTF8.GetString(requestBuffer, 0, numBytes);
+        int indexBodyStart = requestRaw.IndexOf(DOUBLE_NEW_LINE);
+
+        string[] requestLines = requestRaw.Substring(0, indexBodyStart).Split(NEW_LINE);                // Request Line & Request Header
 
         // Read the first line (Request Line)
         string[] requestLine = requestLines[0].Split(' ');                      // Split the request line by space
         (string requestMethod, string requestPath, string requestVersion) = (requestLine[0], requestLine[1], requestLine[2]);
 
-        // Read the remaining lines (Request Header & Body)
-        string? host = null;
-        string? twoNumbers = null;
+        // Read the remaining lines (Request Header)
+        Dictionary<string, string> headers = new Dictionary<string, string>();
 
         for (int i = 1; i < requestLines.Length; i++) {
             string line = requestLines[i];
 
-            if (line.StartsWith("Host", StringComparison.OrdinalIgnoreCase)) {
-                host = GetHeaderValue(line);
-            } else if (line.StartsWith("Two-Numbers", StringComparison.OrdinalIgnoreCase)) {
-                twoNumbers = GetHeaderValue(line);
+            string[] headerPairs = line.Split(": ");
+            if (headerPairs.Length == 2) {
+                headers.Add(headerPairs[0].ToLower(), headerPairs[1].ToLower());
             }
         }
 
-        return new HttpRequest(requestMethod, requestPath, requestVersion, host, twoNumbers);
-    }
+        // Read the request body (if any)
+        string? requestBody = null;
+        if (indexBodyStart + DOUBLE_NEW_LINE.Length < requestRaw.Length) {
+            requestBody = requestRaw.Substring(indexBodyStart, requestRaw.Length - indexBodyStart);
+            requestBody = requestBody.Trim(); // Remove any leading/trailing whitespace
+        }
 
-    private static string GetHeaderValue(string line) { return line.Split(": ")[1]; }
+        return new HttpRequest(requestMethod, requestPath, requestVersion, headers, requestBody);
+    }
 
     private static byte[] ProcessRequest(HttpRequest request) {
 
@@ -122,7 +130,7 @@ public static class MyTcpServer
                 statusCode = HttpStatusCode.Ok;
                 
                 // Calculate the sum of the TwoNumbers passed in the request header
-                string[] twoNumbers = request.TwoNumbers.Split(',');
+                string[] twoNumbers = request.Headers["two-numbers"].Split(',');
                 int sum = Int32.Parse(twoNumbers[0]) + Int32.Parse(twoNumbers[1]);
                 string requestArgument = sum.ToString();
                 responseBody = System.Text.Encoding.UTF8.GetBytes(requestArgument);
@@ -156,18 +164,18 @@ public static class MyTcpServer
                 }
 
                 // Check if the requested site exists in the wwwroot directory
-                if (requestFilePath != null && File.Exists(requestFilePath))
+                string? ext = requestFilePath != null ? Path.GetExtension(requestFilePath).ToLower() : null;
+                if (ext != null && (ext == ".html" || ext == ".css") && File.Exists(requestFilePath))
                 {
                     // Serve requested HTML file
                     statusCode = HttpStatusCode.Ok;
-                    Console.WriteLine($"Host: {request.Host}");
+                    Console.WriteLine($"Host: {request.Headers["host"]}");
                     Console.WriteLine($"Requesting file: {requestFilePath}");
 
                     string fileToServe = File.ReadAllText(requestFilePath);
                     responseBody = System.Text.Encoding.UTF8.GetBytes(fileToServe);
 
                     // Set content type based on file extension.
-                    string ext = Path.GetExtension(requestFilePath).ToLower();
                     if (ext == ".css")
                     {
                         contentType = "text/css";
@@ -176,16 +184,68 @@ public static class MyTcpServer
                     {
                         contentType = "text/html";
                     }
-
                 }
                 else
                 {
-                    statusCode = HttpStatusCode.NotFound;
+                    statusCode = HttpStatusCode.BadRequest;
                 }
             }
             else
             {
-                statusCode = HttpStatusCode.BadRequest;
+                statusCode = HttpStatusCode.NotFound;
+            }
+        }
+        else if (request.Method == "POST")
+        {
+            if (request.Path.StartsWith(@"/add-html/"))
+            {
+                statusCode = HttpStatusCode.Ok;
+                
+                string requestDomain = request.Path.Substring(10);
+                if (Regex.IsMatch(requestDomain, "^[a-zA-Z]+$"))
+                {
+                    string requestFilePath = @$"./wwwroot/{requestDomain}/index.html";
+                    Console.WriteLine($"Adding site html: {request.Path}");
+                
+                    if (!Directory.Exists(@$"./wwwroot/{requestDomain}"))
+                    {
+                        Directory.CreateDirectory(@$"./wwwroot/{requestDomain}");
+                    }
+
+                    // Create a new HTML file in the requested domain directory
+                    File.WriteAllText(requestFilePath, request.body ?? "<html><body>Request Body was empty. Try again.</body></html>");
+                }
+                else
+                {
+                    statusCode = HttpStatusCode.BadRequest;
+                }
+            }
+            else if (request.Path.StartsWith(@"/add-css/"))
+            {
+                statusCode = HttpStatusCode.Ok;
+                
+                string requestDomain = request.Path.Substring(9);
+                if (Regex.IsMatch(requestDomain, "^[a-zA-Z]+$"))
+                {
+                    string requestFilePath = @$"./wwwroot/{requestDomain}/style.css";
+                    Console.WriteLine($"Adding site css: {request.Path}");
+                
+                    if (!Directory.Exists(@$"./wwwroot/{requestDomain}"))
+                    {
+                        Directory.CreateDirectory(@$"./wwwroot/{requestDomain}");
+                    }
+
+                    // Create a new CSS file in the requested domain directory
+                    File.WriteAllText(requestFilePath, request.body ?? "Request Body was empty. Try again.");
+                }
+                else
+                {
+                    statusCode = HttpStatusCode.BadRequest;
+                }
+            }
+            else
+            {
+                statusCode = HttpStatusCode.NotFound;
             }
         }
         else
@@ -233,7 +293,7 @@ public static class MyTcpServer
 // curl -v http://localhost:4321/echo/abc
 // curl -v http://localhost:4321/get-sum/ --header "Two-Numbers: 1,2"
     // (optional) --header "Host: localhost:4321" --header "Accept: */*"
-
+// curl -v -X POST --data-binary @index.html http://localhost:4321/add-site/cam
 
 /* Advanced ways to use CURL ------------------------------------------------------------ */
 
